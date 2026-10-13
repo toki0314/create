@@ -40,6 +40,11 @@
 #include "XRCRuntime.h"
 #include "xrc_abi.h"
 
+// 阈值/自动演奏开关：**必须在条件块外声明**——set_windows/get_windows/set_autoplay
+// 无条件编译并引用它们（XRC_HAS_JUDGE_STUB=0 时亦然）。
+static _Atomic(int)  s_th[4] = {25, 50, 100, 120};
+static _Atomic(bool) s_autoplay = false;   // 开：一切判定强制 Pure（含漏扫 ts=-1）
+
 #if XRC_HAS_JUDGE_STUB
 extern uint64_t xrc_image_base(void);   // Tweak.x 提供
 
@@ -53,9 +58,6 @@ typedef uint64_t (*xrc_commit_ln_t)(uint64_t, uint64_t, uint64_t);  // sub_100AC
 static xrc_commit_t    s_commit    = NULL;   // = image_base + XRC_OFF_JUDGE_COMMIT_FN
 static xrc_commit_ln_t s_commit_ln = NULL;   // = image_base + XRC_OFF_JUDGE_COMMIT_LN_FN
 
-// 阈值（ms），UI 四档写入（顺序 Pure/Far/Lost/Miss → 写入时映射，见 set_windows）
-static _Atomic(int) s_th[4] = {25, 50, 100, 120};
-static _Atomic(bool)  s_autoplay = false;   // 开：一切判定强制 Pure（含漏扫 ts=-1）
 static _Atomic(uint32_t) s_call_total = 0;
 static _Atomic(uint32_t) s_stat_pure = 0, s_stat_far = 0, s_stat_lost = 0,
                          s_stat_ln = 0, s_stat_miss = 0, s_stat_gated = 0;
