@@ -214,6 +214,9 @@ void xrc_judge_log_stats(void) {
 void xrc_judge_autoplay_pure(uint64_t ng, uint64_t note, int32_t judge_time) {
     (void)ng; (void)note; (void)judge_time;
 }
+// Tweak.x 无条件调用基线统计——桩关闭时同样给空实现。
+void xrc_judge_log_stats(void) {
+}
 #endif
 
 static _Atomic(bool) s_judge_active = false;
