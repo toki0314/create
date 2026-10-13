@@ -59,14 +59,14 @@ static void s_ensure_defaults(NSMutableDictionary *p) {
     // 全条件放行 / 本地内容放行：默认关（源逻辑与 2026-09-28 教训见 XRCProfile.h 同名块）
     if (!p[@"unlockAll"])  p[@"unlockAll"]  = @NO;
     if (!p[@"dlReady"])    p[@"dlReady"]    = @NO;
-    // cb 验证链开关：默认开（离线自用前提）——注意与 xrc_config_load 的缺省保持一致。
-    if (!p[@"cbBypass"])   p[@"cbBypass"]   = @YES;
-    // 存储外置：默认开（cb 搬到 Documents，免越狱下外部可管理的唯一通道）
-    if (!p[@"externalCb"]) p[@"externalCb"] = @YES;
-    // 自动演奏：默认关闭（开启 = 全谱强制 Pure，练习外勿用）
+    // cb 验证链开关：默认关(6.8 shell 适配期:cb 站点尚未重定位,开着可能破坏内容加载)
+    if (!p[@"cbBypass"])   p[@"cbBypass"]   = @NO;
+    // 存储外置：默认关(6.8 shell 适配期:容器路径与 7.0 不同,外置可能搬坏 cb)
+    if (!p[@"externalCb"]) p[@"externalCb"] = @NO;
+    // 自动演奏：默认关闭(开启 = 全谱强制 Pure,练习外勿用)
     if (!p[@"autoplay"])   p[@"autoplay"]   = @NO;
-    // 音乐变速：默认开（rate=1 时完全惰性）
-    if (!p[@"speedAudio"]) p[@"speedAudio"] = @YES;
+    // 音乐变速：默认关(6.8 shell 适配期:FMOD 入口还是 7.0 地址,开了会跳错)
+    if (!p[@"speedAudio"]) p[@"speedAudio"] = @NO;
     // 回跳重播 / 观测桩轻量：默认关（观测桩轻量为开发构建专用）
     if (!p[@"replayArm"])  p[@"replayArm"]  = @NO;
     if (!p[@"stubsLite"])  p[@"stubsLite"]  = @NO;
