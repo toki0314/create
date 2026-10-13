@@ -57,7 +57,7 @@ void xrc_probe_run(void) {
     //     判定字 = 偏移 16（word 4）== 0xAA0603E3。v1 该位置是 BR。
     {
         extern uint64_t xrc_image_base(void);
-        const uint32_t *tr = (const uint32_t *)(xrc_image_base() + 0x146800CULL);
+        const uint32_t *tr = (const uint32_t *)(xrc_image_base() + XRC_STUB_TRAMP_OFF);
         g_caps.stub_v2 = (tr[4] == 0xAA0603E3u);
         xrc_logd(XRCLC_PROBE, @"[probe] trampoline v2=%d (tramp[4]=%08x)", g_caps.stub_v2, tr[4]);
     }
