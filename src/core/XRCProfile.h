@@ -1,6 +1,8 @@
 // © 雾月星辰 & MLXC · github@XingChenRS
-// XRCProfile.h — 版本契约（Arcaea iOS 7.0.255）。
+// XRCProfile.h — 版本契约（Arcaea iOS 7.0.255；正在适配 6.8 shell / plist 4.3.0 / build 1208205）。
 // 跨版本迁移只改本文件（+ 注入器 inject.py 侧对应常量）——每个版本按指纹重定位。
+// 6.8-shell 适配状态：判定桩（入口/跳板/slot/info）与 vtable 锚点已重定位（2026 实测）；
+// BRK 站点区、字段布局区（谱面钟/note/FMOD）仍为 7.0 值，逐项重定位中——见各节 TODO。
 //
 // ---- 分区目录（按主题检索）----
 //   · 指纹区：判定核入口 3 指令 / 各站点原字节 expect（跨版本重定位依据）
@@ -56,11 +58,11 @@
 // 出处: 逆向笔记 §2/§3
 // （vtable RTTI 名 9GameScene 已验；本文件所有值均为 image 偏移，
 //   运行时地址 = image_base + offset）
-#define XRC_OFF_GP_VTABLE          (0x151D8C0ULL)   // 绝对 VA 0x10151D8C0
+#define XRC_OFF_GP_VTABLE          (0x106FD38ULL)   // 6.8 shell 实测：RTTI 名 9GameScene → typeinfo → vtable base 0x10106FD28，地址点 +0x10
 // 每帧更新 = vtable 槽 103 sub_100CA7160（帧去重模式与 6.13 gp.update 同源：
 // 全局时间 +308 == self+1168 走快路径；否则 tick note group + 判定分发）。
 // 槽 155（sub_100CA118C）是场景初始化函数（只跑一次），不是每帧更新。
-#define XRC_OFF_GP_UPDATE_FN       (0xCA7160ULL)    // 五参 (self,a2,a3,a4,a5)，同 6.13
+#define XRC_OFF_GP_UPDATE_FN       (0x99A520ULL)    // 6.8 shell：GP 地址点槽 103 值；7.0 语义=每帧更新，⚠ 槽位编号待 dev probe 验证
 
 // ---------------- 桩点（改判） ----------------
 // 出处: 逆向笔记。判定核心 = sub_10091E684（与 6.13 sub_100870FD0 逐行同构的整数 CMP 级联；
@@ -68,7 +70,7 @@
 // ABI: X0 = note_group, X1 = note, X2 = ts（判定时刻 ms）；返回 1 = 消费该 note，
 // 0 = Miss（不消费）。handler 另收 X3 = caller X6（跳板 v2 的 MOV X3,X6）。
 #define XRC_HAS_JUDGE_STUB          1
-#define XRC_JUDGE_STUB_ENTRY_OFF    (0x91E684ULL)   // sub_10091E684（判定核心，2 处直接 BL 调用）
+#define XRC_JUDGE_STUB_ENTRY_OFF    (0x736504ULL)   // 6.8 shell 判定核心 sub_100736504（入口 3×STP 指纹 f85f…44f02a9 与 6.13/7.0 同构；CMP 阈值全在位）
 #define XRC_OFF_JUDGE_COMMIT_FN     (0xACB880ULL)   // sub_100ACB880（grade 落账，6 参，首指令是门）
 #define XRC_OFF_JUDGE_COMMIT_LN_FN  (0xACB6A4ULL)   // sub_100ACB6A4（近失/长条落账，3 参）
 #define XRC_OFF_JUDGE_FX_OBJ        (64)            // note_group+64 = 特效对象
@@ -77,7 +79,7 @@
 // 布局：ADRP/ADD(8) LDR(4) CBZ(4) MOV X3,X6(4) BR(4) → native 重放 3 条原指令
 // + B 回 entry+12。handler 从 X3 拿 caller 的 X6（判定核从不写、落账函数需要）。
 // 直通（slot.handler==0）= CBZ 跳 native，行为与未注入完全一致。
-#define XRC_STUB_TRAMP_OFF          (0x146800CULL)  // trampoline 静态偏移
+#define XRC_STUB_TRAMP_OFF          (0xFEAD54ULL)   // 6.8 shell：__TEXT 尾部零区 0xfead54..0xfeaff8（实测全零，676B）
 
 // 判定函数的 8 个 CMP 阈值站点（CMP Wn,#imm12）。
 // 方案：**handler + 运行时阈值**（dylib 写 __TEXT 会撞 CT/PAC）。这些偏移保留用于：
@@ -85,8 +87,8 @@
 // 分支 B（分段钟，clk+45==1）：26/51/101/121
 // 分支 A（普通钟）：25/50/100/120
 // 注入器在 __DATA 零填充尾部写入 slot（24B）+ info blob（120B，紧邻其后）。
-#define XRC_JUDGE_SLOT_OFF          (0x164AB28ULL)
-#define XRC_INFO_OFF                (0x164AB40ULL)   // slot + 24
+#define XRC_JUDGE_SLOT_OFF          (0x1158880ULL)  // 6.8 shell：__DATA 尾部零区（0x115887d..0x115c000 实测全零；取 16 对齐处）
+#define XRC_INFO_OFF                (0x1158898ULL)  // slot + 24
 
 // ---------------- retry 触发链（研究记录；**禁止调用**） ----------------
 // 出处: 逆向笔记 §11（retry 三层链路逆向）
@@ -112,8 +114,8 @@
 // 20AudioProviderFMODiOS → 7.0 typeinfo 0x1014B7690 → MTP vtable 0x1014B75B0；
 // getpos 槽 7 与 seek 槽 8 形状与 6.13 逐条一致）
 // 路线：只读位置 + seekTo。
-#define XRC_OFF_MTP_VTABLE           (0x14B75B0ULL)   // 绝对 VA 0x1014B75B0（注意：偏移是 0x14B75B0）
-#define XRC_OFF_MTP_GETPOS           (0x8E24F0ULL)    // vtable 槽 7，形状同 6.13
+#define XRC_OFF_MTP_VTABLE           (0x1021000ULL)   // 6.8 shell 实测：RTTI 20AudioProviderFMODiOS → vtable base 0x101020FF0，地址点 +0x10
+#define XRC_OFF_MTP_GETPOS           (0x70D0D0ULL)    // 6.8 shell：地址点槽 7 值；⚠ 槽位编号待 dev probe 验证
 #define XRC_PLAYER_SEEK_SLOT_OFF     (0x40)           // vtable 槽 8，形状同 6.13
 // vtable 槽 6（+0x30）= setPaused(paused, index)：内部按 index 取通道 handle
 // （0 = 默认 *(mtp+0x18) = mainBGMGroup 句柄）后尾调 FMOD_Channel_SetPaused。
@@ -435,8 +437,8 @@
 #define XRC_NOTE_LNSTATE_OFF        100           // note+0x64 = longTouchState 首字节（6.x 0x5C 漂移 +8）
 #define XRC_LN_VOID_OFF             164           // note+0xA4 = 弧 isVoid（弧 vtable[11]=sub_100187C78 读的字段；
                                                   // 6.x 0x9C 漂移 +8，与 Android 7.0 一致）
-#define XRC_LN_VPTR_ARC             0x149C020ULL  // _ZTV12LogicArcNote + 16（对象 vptr）
-#define XRC_LN_VPTR_HOLD            0x14B7980ULL  // _ZTV13LogicHoldNote + 16
+#define XRC_LN_VPTR_ARC             0x100AF28ULL  // 6.8 shell 实测：_ZTV12LogicArcNote base 0x10100AF18 + 16（对象 vptr）
+#define XRC_LN_VPTR_HOLD            0x10213C8ULL  // 6.8 shell 实测：_ZTV13LogicHoldNote base 0x1010213B8 + 16
 #define XRC_AP_NOTE_WIN_CONT_OFF    (0x91DD44ULL) // 窗口强判后的原版汇合点（W19=0;W26=1 → 弧态更新+子扫描）
 #define XRC_AP_ARCTAP_WIN_CONT_OFF  (0x91DD44ULL) // 弧子音符强判后同一汇合点（对齐 外部参考实现：其 success 走 0x100872180
                                                   // → 7.0 0x91DD20 的等价落点；跳 0x91DF5C 会丢弧"被触"视觉）
@@ -494,7 +496,7 @@
 //   累加器候选: dump 实测 +0xf0=250 / +0xf8,+0x100,+0x108 = ptr,ptr,30，
 //         (end-begin)/24 = 24 → 疑似 std::vector<std::string>（元素 24B），
 //         capacity 30 ≥ size 24。语义待 XRCOMLog 探针实测确认。
-#define XRC_OM_VTABLE_OFF           (0x149C110ULL)  // vtable 地址点（vptr 值）
+#define XRC_OM_VTABLE_OFF           (0x100B010ULL)  // 6.8 shell 实测：13OnlineManager → vtable base 0x10100B000，地址点 +0x10（⚠ 槽 72 已非 applog 发送，待重定位）
 #define XRC_OM_APPLOG_SLOT          (72)            // applog 发送（虚槽）
 #define XRC_OM_OFF_ACC_COUNT        (0xf0)          // 疑似累计计数
 #define XRC_OM_OFF_VEC_BEGIN        (0xf8)          // 疑似 vector<string> begin
