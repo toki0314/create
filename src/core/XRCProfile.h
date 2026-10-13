@@ -69,7 +69,7 @@
 // 判别：sub_1009D9ED8/表B 是特效显示链，不参与判定）。
 // ABI: X0 = note_group, X1 = note, X2 = ts（判定时刻 ms）；返回 1 = 消费该 note，
 // 0 = Miss（不消费）。handler 另收 X3 = caller X6（跳板 v2 的 MOV X3,X6）。
-#define XRC_HAS_JUDGE_STUB          1
+#define XRC_HAS_JUDGE_STUB          0
 #define XRC_JUDGE_STUB_ENTRY_OFF    (0x736504ULL)   // 6.8 shell 判定核心 sub_100736504（入口 3×STP 指纹 f85f…44f02a9 与 6.13/7.0 同构；CMP 阈值全在位）
 #define XRC_OFF_JUDGE_COMMIT_FN     (0xACB880ULL)   // sub_100ACB880（grade 落账，6 参，首指令是门）
 #define XRC_OFF_JUDGE_COMMIT_LN_FN  (0xACB6A4ULL)   // sub_100ACB6A4（近失/长条落账，3 参）
