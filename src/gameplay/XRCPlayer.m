@@ -161,7 +161,7 @@ bool xrc_player_detect_change(void *player) {
 }
 
 bool xrc_player_seek_ms(void *self, uint32_t ms) {
-    if (!self) return false;
+    if (!self || XRC_PLAYER_SEEK_SLOT_OFF == 0) return false;   // 槽未重定位 ⇒ 禁用（槽 0 是析构器，会崩）
     typedef void (*seek_fn)(void *, uint32_t, int);
     void **vtable = *(void ***)self;
     if (!vtable) return false;
@@ -178,7 +178,7 @@ bool xrc_player_seek_ms(void *self, uint32_t ms) {
 // index=0 ⇒ 默认通道 handle = *(mtp+0x18)（= mainBGMGroup 句柄，XRC_PLAYER_BGM_GROUP_OFF）。
 bool xrc_player_pause(bool paused) {
     void *self = xrc_player_get();
-    if (!self) return false;
+    if (!self || XRC_PLAYER_PAUSE_SLOT_OFF == 0) return false;  // 槽未重定位 ⇒ 禁用（槽 0 是析构器，会崩）
     void **vtable = *(void ***)self;
     if (!vtable) return false;
     typedef int (*pause_fn)(void *, int, int);

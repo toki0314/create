@@ -44,15 +44,16 @@ static void s_resolve(void) {
     if (atomic_exchange(&done, 1)) return;
     uint64_t mb = xrc_image_base();
     if (!mb) return;
-    p_set_pitch   = (fmod_cc_set_pitch_t)(mb + XRC_OFF_FMOD_CC_SET_PITCH);
-    p_add_dsp     = (fmod_cc_add_dsp_t)  (mb + XRC_OFF_FMOD_CC_ADD_DSP);
-    p_create_dsp  = (fmod_create_dsp_t)  (mb + XRC_OFF_FMOD_CREATE_DSP_BY_TYPE);
-    p_dsp_set     = (fmod_dsp_set_f_t)   (mb + XRC_OFF_FMOD_DSP_SET_PARAM_FLOAT);
-    p_dsp_get     = (fmod_dsp_get_f_t)   (mb + XRC_OFF_FMOD_DSP_GET_PARAM_FLOAT);
-    p_dsp_info    = (fmod_dsp_info_t)    (mb + XRC_OFF_FMOD_DSP_GET_INFO);
-    p_dsp_release = (fmod_dsp_release_t) (mb + XRC_OFF_FMOD_DSP_RELEASE);
-    p_ch_getpos   = (fmod_ch_getpos_t)   (mb + XRC_OFF_CH_GET_POSITION);
-    p_ch_setpos   = (fmod_ch_setpos_t)   (mb + XRC_OFF_CH_SET_POSITION);
+    // 偏移 0 = 未重定位（4.3.0）：保持 NULL，调用点据此降级。
+    if (XRC_OFF_FMOD_CC_SET_PITCH)        p_set_pitch   = (fmod_cc_set_pitch_t)(mb + XRC_OFF_FMOD_CC_SET_PITCH);
+    if (XRC_OFF_FMOD_CC_ADD_DSP)          p_add_dsp     = (fmod_cc_add_dsp_t)  (mb + XRC_OFF_FMOD_CC_ADD_DSP);
+    if (XRC_OFF_FMOD_CREATE_DSP_BY_TYPE)  p_create_dsp  = (fmod_create_dsp_t)  (mb + XRC_OFF_FMOD_CREATE_DSP_BY_TYPE);
+    if (XRC_OFF_FMOD_DSP_SET_PARAM_FLOAT) p_dsp_set     = (fmod_dsp_set_f_t)   (mb + XRC_OFF_FMOD_DSP_SET_PARAM_FLOAT);
+    if (XRC_OFF_FMOD_DSP_GET_PARAM_FLOAT) p_dsp_get     = (fmod_dsp_get_f_t)   (mb + XRC_OFF_FMOD_DSP_GET_PARAM_FLOAT);
+    if (XRC_OFF_FMOD_DSP_GET_INFO)        p_dsp_info    = (fmod_dsp_info_t)    (mb + XRC_OFF_FMOD_DSP_GET_INFO);
+    if (XRC_OFF_FMOD_DSP_RELEASE)         p_dsp_release = (fmod_dsp_release_t) (mb + XRC_OFF_FMOD_DSP_RELEASE);
+    if (XRC_OFF_CH_GET_POSITION)          p_ch_getpos   = (fmod_ch_getpos_t)   (mb + XRC_OFF_CH_GET_POSITION);
+    if (XRC_OFF_CH_SET_POSITION)          p_ch_setpos   = (fmod_ch_setpos_t)   (mb + XRC_OFF_CH_SET_POSITION);
 }
 
 static BOOL s_ptr_ok(void *p) {
@@ -62,7 +63,7 @@ static BOOL s_ptr_ok(void *p) {
 
 static uint64_t s_system(void) {
     uint64_t mb = xrc_image_base();
-    if (!mb) return 0;
+    if (!mb || !XRC_OFF_FMOD_SYSTEM_GLOBAL) return 0;
     uint64_t v = *(volatile uint64_t *)(uintptr_t)(mb + XRC_OFF_FMOD_SYSTEM_GLOBAL);
     return s_ptr_ok((void *)v) ? v : 0;
 }
