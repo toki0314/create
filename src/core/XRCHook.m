@@ -813,6 +813,17 @@ static void s_arc_hide_x(void *vctx) {
 static void s_arc_hide_a(void *vctx) { s_arc_hide_x(vctx); }
 static void s_arc_hide_b(void *vctx) { s_arc_hide_x(vctx); }
 
+// ---- 谱面钟 now_ms 返回钩（6.8 shell / 4.3.0）：X0 毫秒值按 rate 扭曲，跳过 RET ----
+extern uint64_t xrc_clock_warp_ms(uint64_t ms);
+static void s_time_now_warp(void *vctx) {
+    ucontext_t *uc = (ucontext_t *)vctx;
+    if (!uc || !uc->uc_mcontext) return;
+    __typeof__(uc->uc_mcontext->__ss) *ss = &uc->uc_mcontext->__ss;
+    ss->__x[0] = xrc_clock_warp_ms(ss->__x[0]);
+    __darwin_arm_thread_state64_set_pc_fptr(*ss,
+        (void *)((uint64_t)__darwin_arm_thread_state64_get_pc(*ss) + 4));
+}
+
 static const xrc_brk_entry_t k_brk_entries[] = {
     { "applog_send", XRC_BRK_APPLOG_SITE_OFF,     XRC_BRK_APPLOG_REPLAY_OFF,     s_applog_capture },
     { "applog_blob", XRC_BRK_APPLOG_BLOB_SITE_OFF, XRC_BRK_APPLOG_BLOB_REPLAY_OFF, s_applog_blob_capture },
@@ -862,6 +873,8 @@ static const xrc_brk_entry_t k_brk_entries[] = {
     // 弧分段「藏」→「显」（handler 只改 W1；见上方 s_arc_hide_x 注释）
     { "arc_hide_a",       XRC_BRK_ARC_HIDE_A_SITE_OFF,      0,                                   s_arc_hide_a },
     { "arc_hide_b",       XRC_BRK_ARC_HIDE_B_SITE_OFF,      0,                                   s_arc_hide_b },
+    // 谱面钟时间源（6.8 shell / 4.3.0）：now_ms RET 返回钩——X0 扭曲后跳过 RET。
+    { "time_now",         XRC_BRK_TIME_NOW_SITE_OFF,        0,                                   s_time_now_warp },
 };
 
 // ---- 未注册桩位自愈 ----

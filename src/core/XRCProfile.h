@@ -69,7 +69,8 @@
 // 判别：sub_1009D9ED8/表B 是特效显示链，不参与判定）。
 // ABI: X0 = note_group, X1 = note, X2 = ts（判定时刻 ms）；返回 1 = 消费该 note，
 // 0 = Miss（不消费）。handler 另收 X3 = caller X6（跳板 v2 的 MOV X3,X6）。
-#define XRC_HAS_JUDGE_STUB          0
+#define XRC_HAS_JUDGE_STUB          0   // 6.8 shell 适配期临时关闭：落账函数(0xACB880/0xACB6A4)尚未重定位，
+                                        // handler 接管判定后必跳错地址崩;定位完成后改回 1
 #define XRC_JUDGE_STUB_ENTRY_OFF    (0x736504ULL)   // 6.8 shell 判定核心 sub_100736504（入口 3×STP 指纹 f85f…44f02a9 与 6.13/7.0 同构；CMP 阈值全在位）
 #define XRC_OFF_JUDGE_COMMIT_FN     (0xACB880ULL)   // sub_100ACB880（grade 落账，6 参，首指令是门）
 #define XRC_OFF_JUDGE_COMMIT_LN_FN  (0xACB6A4ULL)   // sub_100ACB6A4（近失/长条落账，3 参）
@@ -168,6 +169,10 @@
 //
 // 首个站点 = **applog 发送函数入口**（OnlineManager 槽 72）：观测 applog 触发。
 #define XRC_HAS_BRK_HOOK            1
+// 谱面钟时间源（6.8 shell / 4.3.0）：now_ms() 总函数 sub_1008E6030 的 RET 返回钩。
+// 函数体 = chrono steady_clock::now → /1e6 → ms（UMULH 除法常数），全二进制 155 个
+// 调用方（谱面钟 / UI tick 全走它）；handler 扭曲 X0 毫秒值后跳过 RET（no-replay）。
+#define XRC_BRK_TIME_NOW_SITE_OFF   (0x8E605CULL)
 #define XRC_BRK_APPLOG_SITE_OFF     (0x623AECULL)   // sub_100623AEC 入口（VA 0x100623AEC）
 #define XRC_BRK_APPLOG_REPLAY_OFF   (0x1468040ULL)  // 重放跳板（__TEXT 空白页，VA 0x101468040）
 #define XRC_BRK_MAX_SLOTS           64
