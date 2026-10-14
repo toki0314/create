@@ -322,6 +322,10 @@ static void doBootstrap(void) {
                 xrc_player_try_capture_length(p);
                 xrc_player_poll_position(p);   // 位置兜底（getpos hook 不频繁触发）
             }
+            // 音乐变速：挂在自家定时器上——**不再依赖 gp.update**（4.3.0 GP 锚点未启用时，
+            // 原来放在 XRCGameplay 的 gp.update 包装里的这行永远不会被执行 ⇒ 音乐不跟速）。
+            // 0.5s 去重 tick：速度变了/换歌了/通道刚建才真正动作。
+            @try { xrc_audio_speed_tick(); } @catch (NSException *e) {}
         }];
         [[NSRunLoop mainRunLoop] addTimer:xrc_tick forMode:NSRunLoopCommonModes];
         xrc_replay_start();   // 回跳重播引擎：常驻检出线程（落笔在主队列；总门由面板控制）
