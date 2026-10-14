@@ -116,19 +116,23 @@
 // getpos 槽 7 与 seek 槽 8 形状与 6.13 逐条一致）
 // 路线：只读位置 + seekTo。
 #define XRC_OFF_MTP_VTABLE           (0x1021000ULL)   // 6.8 shell 实测：RTTI 20AudioProviderFMODiOS → vtable base 0x101020FF0，地址点 +0x10
-#define XRC_OFF_MTP_GETPOS           (0x70D0D0ULL)    // 6.8 shell：地址点槽 7 值；⚠ 槽位编号待 dev probe 验证
-// ⚠ 4.3.0 未验证：0x40/0x30 是 7.0 的槽编号，槽 0 会被当合法函数指针调用（= crash）。
-//   2026-10-14 崩溃报告（EXC_BAD_ACCESS/KERN_PROTECTION_FAILURE @ base+0x103415C）
-//   证明"未重定位偏移被真实调用"即崩 ⇒ 未验证项一律置 0 关闭（消费者均有零值保护）。
-#define XRC_PLAYER_SEEK_SLOT_OFF     (0)              // vtable 槽 8（7.0 值 0x40；4.3.0 待验证）
+#define XRC_OFF_MTP_GETPOS           (0x70D0D0ULL)    // 6.8 shell：地址点槽 7 值
+// 4.3.0 实证（2026-10-14 反汇编 MTP 包装函数）：槽 8 包装函数内部 BL `Channel::setPosition`(0xC782E4, unit=1=ms)
+//   ⇒ 槽 8 = seek；槽 7 包装函数内部 BL `Channel::getPosition`(0xC7840C) ⇒ 槽 7 = getpos。
+//   槽 6 包装函数（暂停链）首位 STP X29,X30 且尾部走 Channel 暂停路径 ⇒ 槽 6 = setPaused。
+#define XRC_PLAYER_SEEK_SLOT_OFF     (0x40)           // vtable 槽 8（4.3.0 反汇编验证）
 // vtable 槽 6（+0x30）= setPaused(paused, index)：内部按 index 取通道 handle
 // （0 = 默认 *(mtp+0x18) = mainBGMGroup 句柄）后尾调 FMOD_Channel_SetPaused。
 // 证据：外部参考实现全链对齐（resolver 0x1010E846C → 对象 vt[+0x10] → 实现 0x1010E84A0 与 6.13
 // 逐字节相同）；7.0 的 FMOD_Channel_SetPaused 本体 = 0x1010E2CCC。详见
 // 内部设计纪要（离线记录） §1.3/§2。
-#define XRC_PLAYER_PAUSE_SLOT_OFF    (0)              // vtable 槽 6（7.0 值 0x30；4.3.0 待验证）
-#define XRC_OFF_CH_GET_POSITION      (0)              // Channel::getPosition（7.0=0x1033BBC；4.3.0 该处是 __DATA ⇒ 置 0）
-#define XRC_OFF_GET_CURRENT_SOUND    (0)              // Channel::getCurrentSound（7.0=0x103415C；4.3.0 该处是 __DATA ⇒ 置 0）
+#define XRC_PLAYER_PAUSE_SLOT_OFF    (0x30)           // vtable 槽 6（4.3.0 槽位表实证）
+// 4.3.0 实证：MTP 槽 7 包装函数内部 `LDR X8,[X0,#0x38]`(通道表 begin/end) + `ADD X8,X8,X9,LSL#4`
+//   （16 字节/项）+ `LDR X0,[X8,#8]`（项内 +8 = FMOD 通道句柄）+ `MOV W2,#1`(ms) → BL getPosition。
+//   ⇒ XRC_PLAYER_CHANNELS_OFF=0x38 与 XRC_CHANNEL_ENTRY_PTR_OFF=8 在 4.3.0 完全一致。
+#define XRC_OFF_CH_GET_POSITION      (0xC7840CULL)    // Channel::getPosition（包装函数实证）
+#define XRC_OFF_GET_CURRENT_SOUND    (0)              // Channel::getCurrentSound 已定位=0xC789E0，但取曲长后走
+                                                      // Sound vtable[19]（未验证）⇒ 本轮仍关闭，避免又一次踩雷。
 // get_sound_length：未定位（进度条用 max_seen 兜底）。
 // get_registry：由 getpos hook 缓存 player 实例替代。
 #define XRC_OFF_GET_REGISTRY        0
@@ -137,25 +141,31 @@
 #define XRC_PLAYER_CHANNELS_OFF     (0x38)
 #define XRC_CHANNEL_ENTRY_PTR_OFF   (8)
 
-// ---------------- FMOD：音乐变速用到的入口（4.3.0 待重定位 ⇒ 全部置 0 关闭）----------------
-// 出处：FMOD 静态链入本二进制，各 API 自带调试串（`ChannelControl::addDSP` 等）→ 字符串 xref 定位。
+// ---------------- FMOD：音乐变速用到的入口（4.3.0 已重定位）----------------
+// 定位法（已用 4 个已知函数校验通过）：`LC_FUNCTION_STARTS`（47147 个函数入口）
+//   + FMOD 调试串（"ChannelControl::setPitch" 等，在 0x100eab8xx~0x100eb1xxx）的
+//   ADRP/ADD 引用点 → 引用点所属函数 = 该 API 本体。
+//   校验：Channel::getPosition/setPosition（MTP 包装函数内部 BL 实证）、
+//         DSP::release、ChannelControl::getSystemObject 全部命中 ✅。
+//   setPitch 另用 vtable 槽 9（偏移 0x48）虚调用形状终审确认（FMOD Ex vtable 布局）。
 //   路线：直接用 **FMOD 内置移调 DSP**：
-//     ① setPitch(BGM 组, rate) 让音乐跟着速度走（音高随动）
-//     ② 组上挂内置 Pitch Shifter，参数 1/rate 把音高补回来 ⇒ 时长随速度、音高不变
+//     ① setPitch(BGM 通道, rate) 让音乐跟着速度走（音高随动）
+//     ② 通道上挂内置 Pitch Shifter，参数 1/rate 把音高补回来 ⇒ 时长随速度、音高不变
 //     ③ 移调 DSP 有固有延迟（≈FFT 窗），把通道位置前移 rate·L 补偿
 //   类型号**不写死**：运行时枚举 createDSPByType + DSP::getInfo 取名字含 "Pitch" 者（XRCAudio.m）。
-// ⚠ 以下 7.0 偏移在 4.3.0 全部未重定位：调用即跳进 __DATA 崩（2026-10-14 崩溃证据）。
-//   XRCAudio.m 的调用点均有 NULL 保护 ⇒ 置 0 后该模块自动降级（音乐变速暂不可用）。
-#define XRC_OFF_FMOD_CC_SET_PITCH      (0)   // 7.0=0x10E32F8
-#define XRC_OFF_FMOD_CC_ADD_DSP        (0)   // 7.0=0x10E5194
-#define XRC_OFF_FMOD_CREATE_DSP_BY_TYPE (0)  // 7.0=0x10ABA64
-#define XRC_OFF_FMOD_DSP_SET_PARAM_FLOAT (0) // 7.0=0x1063D74
-#define XRC_OFF_FMOD_DSP_GET_PARAM_FLOAT (0) // 7.0=0x1064210
-#define XRC_OFF_FMOD_DSP_GET_INFO      (0)   // 7.0=0x1064C70
-#define XRC_OFF_FMOD_DSP_RELEASE       (0)   // 7.0=0x1062658
-#define XRC_OFF_CH_SET_POSITION        (0)   // 7.0=0x1033A94
+// ⚠ System::createDSPByType 仍未定位（其调试串全二进制无引用）⇒ ②③ 暂不可用，
+//   先交付磁带式跟速（音高随速度升降，XRCAudio 本就支持该退化路径）。
+#define XRC_OFF_FMOD_CC_SET_PITCH      (0xD23680ULL)   // 槽 9 虚调用实证（LDR X8,[X0];LDR X8,[X8,#0x48];BLR）
+#define XRC_OFF_FMOD_CC_ADD_DSP        (0xD25400ULL)   // 调试串 xref 所属函数（函数表校验）
+#define XRC_OFF_FMOD_CC_GET_SYSTEM_OBJECT (0xD22E5CULL) // ChannelControl::getSystemObject(cc, &sys)（取代全局变量取 system）
+#define XRC_OFF_FMOD_CREATE_DSP_BY_TYPE (0)   // 未定位（无串引用）⇒ 音高补偿暂不可用
+#define XRC_OFF_FMOD_DSP_SET_PARAM_FLOAT (0xCAC718ULL) // DSP::setParameterFloat
+#define XRC_OFF_FMOD_DSP_GET_PARAM_FLOAT (0xCACB9CULL) // DSP::getParameterFloat（5 参）
+#define XRC_OFF_FMOD_DSP_GET_INFO      (0xCAD5D4ULL)   // DSP::getInfo（6 参）
+#define XRC_OFF_FMOD_DSP_RELEASE       (0xCAB108ULL)   // DSP::release
+#define XRC_OFF_CH_SET_POSITION        (0xC782E4ULL)   // Channel::setPosition（MTP 槽 8 包装函数实证）
 #define XRC_PLAYER_BGM_GROUP_OFF       (0x18)           // AudioProviderFMODiOS + 0x18 = mainBGMGroup 句柄
-#define XRC_OFF_FMOD_SYSTEM_GLOBAL     (0)   // 7.0=0x164E678（4.3.0 是 __DATA，读数无害但无意义 ⇒ 置 0）
+#define XRC_OFF_FMOD_SYSTEM_GLOBAL     (0)   // 改用 getSystemObject 取 system（7.0 全局=0x164E678）
 
 // ---------------- BRK 桩（第二种插桩形态）----------------
 // 原理：注入器把目标指令原地改成 `BRK #0`（4B，长度
