@@ -65,8 +65,8 @@ static void s_ensure_defaults(NSMutableDictionary *p) {
     if (!p[@"externalCb"]) p[@"externalCb"] = @NO;
     // 自动演奏：默认关闭(开启 = 全谱强制 Pure,练习外勿用)
     if (!p[@"autoplay"])   p[@"autoplay"]   = @NO;
-    // 音乐变速：默认关(6.8 shell 适配期:FMOD 入口还是 7.0 地址,开了会跳错)
-    if (!p[@"speedAudio"]) p[@"speedAudio"] = @NO;
+    // 音乐变速：默认**开**（4.3.0 的 FMOD 入口已重定位；未定位时模块自行降级为磁带式/不动，不会崩）
+    if (!p[@"speedAudio"]) p[@"speedAudio"] = @YES;
     // 回跳重播 / 观测桩轻量：默认关（观测桩轻量为开发构建专用）
     if (!p[@"replayArm"])  p[@"replayArm"]  = @NO;
     if (!p[@"stubsLite"])  p[@"stubsLite"]  = @NO;
