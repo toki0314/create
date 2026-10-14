@@ -77,12 +77,13 @@ xrc_runtime_t xrc_runtime_discover(void) {
     const struct xrc_info *info = s_scan_info(scan_start, scan_end);
     if (info) {
         r.found = true;
-        r.judge_entry = base + info->judge_entry_off;
-        r.judge_slot  = base + info->judge_slot_off;
-        r.gp_vtable   = base + info->gp_vtable_off;
-        r.gp_update   = base + info->gp_update_off;
-        r.mtp_vtable  = base + info->mtp_vtable_off;
-        r.mtp_getpos  = base + info->mtp_getpos_off;
+        // 偏移 0 = 未提供（锚点缺省）：置 0 让消费者降级，而不是误算成 image_base+0。
+        r.judge_entry = info->judge_entry_off ? base + info->judge_entry_off : 0;
+        r.judge_slot  = info->judge_slot_off  ? base + info->judge_slot_off  : 0;
+        r.gp_vtable   = info->gp_vtable_off   ? base + info->gp_vtable_off   : 0;
+        r.gp_update   = info->gp_update_off   ? base + info->gp_update_off   : 0;
+        r.mtp_vtable  = info->mtp_vtable_off  ? base + info->mtp_vtable_off  : 0;
+        r.mtp_getpos  = info->mtp_getpos_off  ? base + info->mtp_getpos_off  : 0;
         xrc_logd(XRCLC_BOOT, @"runtime info found: judge=%llx slot=%llx gpvt=%llx gpup=%llx mtpvt=%llx mtpgp=%llx",
                  r.judge_entry, r.judge_slot, r.gp_vtable, r.gp_update,
                  r.mtp_vtable, r.mtp_getpos);
