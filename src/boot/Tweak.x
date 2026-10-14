@@ -232,9 +232,15 @@ static void doBootstrap(void) {
         @try {
             static dispatch_once_t tw_once;
             dispatch_once(&tw_once, ^{
-                struct rebinding rs[1] = {
+                // 时间源 warp：gettimeofday（UI/加载动画）+ 单调钟三件套
+                // （mach_absolute_time / clock_gettime / chrono steady_clock::now——
+                //   6.8 shell(4.3.0) 谱面钟走单调钟）。
+                struct rebinding rs[4] = {
                     { "gettimeofday", (void *)xrc_clock_gettimeofday, (void **)&xrc_clock_orig_gettimeofday },
-                };                rebind_symbols(rs, 1);
+                    { "mach_absolute_time", (void *)xrc_clock_mach_absolute_time, (void **)&xrc_clock_orig_mach_absolute_time },
+                    { "clock_gettime", (void *)xrc_clock_clock_gettime, (void **)&xrc_clock_orig_clock_gettime },
+                    { "__ZNSt3__16chrono12steady_clock3nowEv", (void *)xrc_clock_steady_now, (void **)&xrc_clock_orig_steady_now },
+                };                rebind_symbols(rs, 4);
             });
         } @catch (NSException *e) { xrc_logw(XRCLC_BOOT, @"timewarp EX: %@", e); }
         if (g_cfg.speed_count > 0)
