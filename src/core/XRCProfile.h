@@ -167,6 +167,14 @@
 #define XRC_PLAYER_BGM_GROUP_OFF       (0x18)           // AudioProviderFMODiOS + 0x18 = mainBGMGroup 句柄
 #define XRC_OFF_FMOD_SYSTEM_GLOBAL     (0)   // 改用 getSystemObject 取 system（7.0 全局=0x164E678）
 
+// ---------------- 4.3.0 变速实现路线选择 ----------------
+// =1：速度由 **BRK 时间钩（now_ms 返回钩，见 XRC_BRK_TIME_NOW_SITE_OFF）** 提供
+//     —— 游戏自己的钟被整体缩放，谱面/UI 同源一致。
+// =0：回到 7.0 的 gp.update retime 方案（每帧给时钟 base 叠加 delta×(1−rate)）。
+// ⚠ 两者**同时开 = 叠加**（谱面实际倍率 2·rate−1，音画不同步）⇒ 二选一。
+// 4.3.0 实测：BRK 时间钩有效 ⇒ 选 1，XRCGameplay 里的 retime 关闭。
+#define XRC_SPEED_BY_TIME_BRK        1
+
 // ---------------- BRK 桩（第二种插桩形态）----------------
 // 原理：注入器把目标指令原地改成 `BRK #0`（4B，长度
 // 不变），dylib 用 SIGTRAP 处理器接住，跑完自己的逻辑后把 ucontext 的 PC 指到
