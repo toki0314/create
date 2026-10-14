@@ -28,6 +28,8 @@ typedef int32_t (*fmod_dsp_info_t)(void *dsp, char *name, uint32_t *version,
 typedef int32_t (*fmod_dsp_release_t)(void *dsp);
 typedef int32_t (*fmod_ch_getpos_t)(void *ch, uint32_t *pos, uint32_t unit);
 typedef int32_t (*fmod_ch_setpos_t)(void *ch, uint32_t pos, uint32_t unit);
+// 4.3.0 新定位：从任意 ChannelControl（通道/组）反查 FMOD System —— 取代 7.0 的全局变量。
+typedef int32_t (*fmod_cc_get_sys_t)(void *cc, uint64_t *out_sys);
 
 static fmod_cc_set_pitch_t p_set_pitch;
 static fmod_cc_add_dsp_t   p_add_dsp;
@@ -38,6 +40,7 @@ static fmod_dsp_info_t     p_dsp_info;
 static fmod_dsp_release_t  p_dsp_release;
 static fmod_ch_getpos_t    p_ch_getpos;
 static fmod_ch_setpos_t    p_ch_setpos;
+static fmod_cc_get_sys_t   p_get_sys;
 
 static void s_resolve(void) {
     static atomic_int done;
@@ -54,6 +57,7 @@ static void s_resolve(void) {
     if (XRC_OFF_FMOD_DSP_RELEASE)         p_dsp_release = (fmod_dsp_release_t) (mb + XRC_OFF_FMOD_DSP_RELEASE);
     if (XRC_OFF_CH_GET_POSITION)          p_ch_getpos   = (fmod_ch_getpos_t)   (mb + XRC_OFF_CH_GET_POSITION);
     if (XRC_OFF_CH_SET_POSITION)          p_ch_setpos   = (fmod_ch_setpos_t)   (mb + XRC_OFF_CH_SET_POSITION);
+    if (XRC_OFF_FMOD_CC_GET_SYSTEM_OBJECT) p_get_sys    = (fmod_cc_get_sys_t)  (mb + XRC_OFF_FMOD_CC_GET_SYSTEM_OBJECT);
 }
 
 static BOOL s_ptr_ok(void *p) {
@@ -61,14 +65,29 @@ static BOOL s_ptr_ok(void *p) {
     return v > 0x100000000ULL && v < 0x800000000000ULL;
 }
 
+static void *s_channel0(void);   // 前向声明（s_system 要用它反查 system）
+
 static uint64_t s_system(void) {
+    // ① 4.3.0 主路径：ChannelControl::getSystemObject(通道, &sys)（已定位，取代 7.0 全局变量）
+    if (p_get_sys) {
+        void *cc = s_channel0();
+        if (cc) {
+            uint64_t sys = 0;
+            if (p_get_sys(cc, &sys) == 0 && s_ptr_ok((void *)sys)) return sys;
+        }
+    }
+    // ② 兜底：7.0 的全局变量（4.3.0 已置 0，通常不走）
     uint64_t mb = xrc_image_base();
     if (!mb || !XRC_OFF_FMOD_SYSTEM_GLOBAL) return 0;
     uint64_t v = *(volatile uint64_t *)(uintptr_t)(mb + XRC_OFF_FMOD_SYSTEM_GLOBAL);
     return s_ptr_ok((void *)v) ? v : 0;
 }
 
+// 变速作用对象（ChannelControl*）：优先用 **4.3.0 已反汇编实证**的通道表（player+0x38，16B/项，项内 +8 = 通道句柄），
+// 拿不到再退回 7.0 的 BGM 组偏移（+0x18，4.3.0 未验证）。Channel 与 ChannelGroup 同属 ChannelControl，setPitch 通用。
 static void *s_bgm_group(void) {
+    void *c = s_channel0();
+    if (c) return c;
     void *player = xrc_player_get();
     if (!player) return NULL;
     void *g = *(void **)((char *)player + XRC_PLAYER_BGM_GROUP_OFF);
