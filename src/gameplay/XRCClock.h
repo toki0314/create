@@ -35,3 +35,6 @@ uint64_t xrc_clock_steady_now(void);
 extern uint64_t (*xrc_clock_orig_mach_absolute_time)(void);
 extern int      (*xrc_clock_orig_clock_gettime)(int, struct timespec *);
 extern uint64_t (*xrc_clock_orig_steady_now)(void);
+
+// now_ms 域 warp（BRK 站点 time_now 返回钩用）：对游戏的毫秒时间值做同 rate 扭曲。
+uint64_t xrc_clock_warp_ms(uint64_t ms);

@@ -90,6 +90,33 @@ uint64_t xrc_real_now_us(void) {
     return 0;
 }
 
+// ---- now_ms 域 warp（BRK 站点 time_now 返回钩;谱面钟时间源）----
+static _Atomic(uint64_t) s_ms_t0_real = 0;
+static _Atomic(uint64_t) s_ms_t0_warp = 0;
+static _Atomic(uint64_t) s_ms_frozen  = 0;
+
+// dylib 自算毫秒(与游戏 now_ms 同基:mach ticks → ns → ms)。
+static uint64_t s_ms_now(void) {
+    return s_ticks_to_ns(mach_absolute_time()) / 1000000ULL;
+}
+
+static uint64_t s_compute_warp_ms(uint64_t ms) {
+    double rate = xrc_clock_get_rate();
+    uint64_t t0r = atomic_load(&s_ms_t0_real);
+    uint64_t t0w = atomic_load(&s_ms_t0_warp);
+    if (t0r == 0 || (rate >= 0.999 && rate <= 1.001)) return ms;
+    if (ms <= t0r) return t0w;
+    return t0w + (uint64_t)((double)(ms - t0r) * rate);
+}
+
+uint64_t xrc_clock_warp_ms(uint64_t ms) {
+    if (atomic_load(&s_freeze_count) > 0) {
+        uint64_t f = atomic_load(&s_ms_frozen);
+        return f ? f : ms;
+    }
+    return s_compute_warp_ms(ms);
+}
+
 double xrc_clock_get_rate(void) {
     return (double)atomic_load(&s_rate_x1000) / 1000.0;
 }
@@ -114,6 +141,12 @@ void xrc_clock_warp_reset(void) {
         atomic_store(&s_mt0_real_ticks, mt);
         atomic_store(&s_mt0_warp_ticks, s_compute_warp_ticks(mt));
     }
+    // now_ms 通道同步重锚（谱面钟）
+    {
+        uint64_t ms = s_ms_now();
+        atomic_store(&s_ms_t0_real, ms);
+        atomic_store(&s_ms_t0_warp, ms);
+    }
 }
 
 void xrc_clock_set_rate(double rate) {
@@ -129,6 +162,7 @@ void xrc_clock_freeze_inc(void) {
         atomic_store(&s_frozen_us, s_compute_warp_us(xrc_real_now_us()));
         if (xrc_clock_orig_mach_absolute_time)
             atomic_store(&s_mfrozen_ticks, s_compute_warp_ticks(xrc_clock_orig_mach_absolute_time()));
+        atomic_store(&s_ms_frozen, s_ms_now());
     }
 }
 
@@ -150,6 +184,12 @@ void xrc_clock_freeze_dec(void) {
             uint64_t mf = atomic_load(&s_mfrozen_ticks);
             atomic_store(&s_mt0_real_ticks, mt);
             atomic_store(&s_mt0_warp_ticks, mf ? mf : mt);
+        }
+        {
+            uint64_t ms = s_ms_now();
+            uint64_t mf = atomic_load(&s_ms_frozen);
+            atomic_store(&s_ms_t0_real, ms);
+            atomic_store(&s_ms_t0_warp, mf ? mf : ms);
         }
     }
 }
