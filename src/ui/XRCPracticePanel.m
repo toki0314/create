@@ -38,6 +38,7 @@
 // ---------------- 说明文本（ⓘ 模式逐页展示；长按单项另见各 note） ----------------
 static NSString *const kNoteLoop =
     @"设 A/B ＝ 把当前位置记入区间；循环开 ＝ 播到 B 自动回 A。时间轴上的 A/B 菱形可直接拖动改区间。\n"
+    @"**点时间行（A … B …）可直接输入时间段**，如 0:35.2 – 1:10.5，无需播放到该位置。\n"
     @"回跳重播开启时，回退会由重播引擎接管：音符重现、该段记分清空。";
 static NSString *const kNoteJudge =
     @"四档 ±ms 阈值，只改本地判定宽容度，不动谱面；数值需递增（应用时自动夹取）。\n"
@@ -289,6 +290,10 @@ static NSString *const kNoteSpeed =
         self.tcur = [self monoLabel:x0 w:xrc_theme_px(150) y:my size:15 color:XRC_TXT];
         self.tmid = [self monoLabel:x0 + xrc_theme_px(150) w:cw - xrc_theme_px(320) y:my size:12 color:XRC_LAV];
         self.tmid.textAlignment = NSTextAlignmentCenter;
+        // 直接输入循环时间：点这一行弹输入框（不必播放到位置）
+        self.tmid.userInteractionEnabled = YES;
+        [self.tmid addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self
+                                                                               action:@selector(editLoopTimes)]];
         self.ttot = [self monoLabel:x0 + cw - xrc_theme_px(170) w:xrc_theme_px(170) y:my size:15 color:XRC_DIM2];
         self.ttot.textAlignment = NSTextAlignmentRight;
     }
@@ -1133,11 +1138,88 @@ static NSString *const kNoteSpeed =
     xrc_config_save(&c);
     xrc_audio_speed_set_enabled(c.speed_audio);
     if (c.toast) {
-        [WHToast showMessage:(c.speed_audio ? @"音乐变速：开（BGM 跟随速度，保音高）"
+        [WHToast showMessage:(c.speed_audio ? @"音乐变速：开（BGM 跟随速度；音高随速度=磁带式）"
                                             : @"音乐变速：关（BGM 恒 1.0x，音画会错开）")
                     duration:1.6 finishHandler:^{}];
     }
     [self refresh];
+}
+
+#pragma mark - 直接输入循环时间（A/B）
+
+// 解析时间串：支持 "m:ss.mmm" / "mm:ss" / "ss.mmm" / "ss"；无分隔符且 ≥100000 视为毫秒
+- (BOOL)parseTimeMs:(NSString *)s outMs:(uint32_t *)outMs {
+    NSString *t = [s stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if (!t.length) return NO;
+    if ([t rangeOfString:@":"].location != NSNotFound) {
+        NSArray *p = [t componentsSeparatedByString:@":"];
+        if (p.count != 2) return NO;
+        double m = [p[0] doubleValue], sec = [p[1] doubleValue];
+        if (m < 0 || sec < 0 || sec >= 60.0) return NO;
+        if (outMs) *outMs = (uint32_t)((m * 60.0 + sec) * 1000.0 + 0.5);
+        return YES;
+    }
+    double v = [t doubleValue];
+    if (v < 0) return NO;
+    if ([t rangeOfString:@"."].location == NSNotFound && v >= 100000.0) {
+        if (outMs) *outMs = (uint32_t)(v + 0.5);      // 纯毫秒
+        return YES;
+    }
+    if (outMs) *outMs = (uint32_t)(v * 1000.0 + 0.5); // 秒
+    return YES;
+}
+
+// 点时间显示行 → **直接输入 A/B**（不必播放到那个位置）
+- (void)editLoopTimes {
+    uint32_t from = 0, to = 0, len = xrc_player_song_length_ms(), pos = xrc_player_position_ms();
+    xrc_loop_get_range(&from, &to);
+    if (to <= from) {              // 无区间：用「当前位置 → 曲尾」做草稿
+        from = pos;
+        to   = (len > pos + 1000) ? len : pos + 1000;
+    }
+    UIAlertController *a = [UIAlertController
+        alertControllerWithTitle:@"循环片段（直接输入时间）"
+        message:[NSString stringWithFormat:@"格式 m:ss.mmm 或秒数（如 0:35.2 / 70.5）。本曲总长 %@",
+                 len ? [NSString stringWithFormat:@"%u:%02u.%03u", len / 60000, (len / 1000) % 60, len % 1000]
+                     : @"（未知）"]
+        preferredStyle:UIAlertControllerStyleAlert];
+    [a addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.placeholder = @"起点 A";
+        tf.text = [NSString stringWithFormat:@"%u:%02u.%03u", from / 60000, (from / 1000) % 60, from % 1000];
+        tf.keyboardType = UIKeyboardTypeNumbersAndPunctuation;
+        tf.clearButtonMode = UITextFieldViewModeWhileEditing;
+    }];
+    [a addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.placeholder = @"终点 B";
+        tf.text = [NSString stringWithFormat:@"%u:%02u.%03u", to / 60000, (to / 1000) % 60, to % 1000];
+        tf.keyboardType = UIKeyboardTypeNumbersAndPunctuation;
+        tf.clearButtonMode = UITextFieldViewModeWhileEditing;
+    }];
+    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    __weak typeof(self) ws = self;
+    [a addAction:[UIAlertAction actionWithTitle:@"设区间并循环" style:UIAlertActionStyleDefault
+                                       handler:^(UIAlertAction *act) {
+        __strong typeof(self) sf = ws; if (!sf) return;
+        uint32_t a1 = 0, b1 = 0;
+        if (![sf parseTimeMs:a.textFields[0].text outMs:&a1] ||
+            ![sf parseTimeMs:a.textFields[1].text outMs:&b1]) {
+            [WHToast showMessage:@"时间格式不对：示例 0:35.200 / 1:10 / 70.5" duration:2.0 finishHandler:^{}];
+            return;
+        }
+        uint32_t dur = xrc_player_song_length_ms();
+        if (dur && b1 > dur) b1 = dur;
+        if (b1 <= a1 + 1000) {
+            [WHToast showMessage:@"终点需比起点晚 1 秒以上" duration:1.8 finishHandler:^{}];
+            return;
+        }
+        xrc_loop_set_range(a1, b1);
+        xrc_loop_set_enabled(true);        // 直接填区间 = 意图明确，顺手开循环
+        sf.pendingTo = NO;
+        [sf refresh];
+        [WHToast showMessage:[NSString stringWithFormat:@"循环 %@ – %@（已开）",
+                              [sf mmss:a1], [sf mmss:b1]] duration:1.8 finishHandler:^{}];
+    }]];
+    [[self keyWindow].rootViewController presentViewController:a animated:YES completion:nil];
 }
 
 - (void)editNetBase {
@@ -1267,7 +1349,8 @@ static NSString *const kNoteSpeed =
         self.tmid.text = [NSString stringWithFormat:@"A %@　B %@", [self mmss:from], [self mmss:to]];
         self.tmid.textColor = xrc_loop_get_enabled() ? XRC_LAV : XRC_DIM2;
     } else {
-        self.tmid.text = @"";
+        self.tmid.text = @"点此输入 A/B 时间 ✎";     // 直接填时间段（无需播放到位置）
+        self.tmid.textColor = XRC_DIM2;
     }
     double r = xrc_clock_get_rate();
     self.speedNum.text = [NSString stringWithFormat:@"%.2f", r];
