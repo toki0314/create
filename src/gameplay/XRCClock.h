@@ -25,3 +25,13 @@ int32_t xrc_clock_freeze_count(void);
 int xrc_clock_gettimeofday(struct timeval *tv, void *tz);
 // 原 gettimeofday（fishhook 保存），XRCGameplay 的 retime 用。
 extern int (*xrc_clock_orig_gettimeofday)(struct timeval *, void *);
+
+// 单调钟 warp 通道（6.8 shell / 4.3.0：谱面钟走单调钟，不走 gettimeofday）。
+// mach_absolute_time(ticks) / clock_gettime(CLOCK_MONOTONIC) / chrono steady_clock::now(ns)
+// 三个入口共用同一套 ticks 域 warp 与 freeze。
+uint64_t xrc_clock_mach_absolute_time(void);
+int      xrc_clock_clock_gettime(int clk_id, struct timespec *tp);
+uint64_t xrc_clock_steady_now(void);
+extern uint64_t (*xrc_clock_orig_mach_absolute_time)(void);
+extern int      (*xrc_clock_orig_clock_gettime)(int, struct timespec *);
+extern uint64_t (*xrc_clock_orig_steady_now)(void);

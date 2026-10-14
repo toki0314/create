@@ -4,6 +4,7 @@
 #import <Foundation/Foundation.h>
 #import "XRCLog.h"          // 拒绝非法 rate 时留痕
 #include "XRCClock.h"
+#include <mach/mach_time.h>
 
 static _Atomic(uint64_t) s_t0_real_us = 0;
 static _Atomic(uint64_t) s_t0_warp_us = 0;
@@ -11,7 +12,74 @@ static _Atomic(uint32_t) s_rate_x1000  = 1000;
 static _Atomic(int32_t)  s_freeze_count = 0;
 static _Atomic(uint64_t) s_frozen_us    = 0;
 
+// ---- 单调钟 warp 通道（ticks 域）----
+static _Atomic(uint64_t) s_mt0_real_ticks = 0;
+static _Atomic(uint64_t) s_mt0_warp_ticks = 0;
+static _Atomic(uint64_t) s_mfrozen_ticks  = 0;
+static double s_tb_ratio = 0.0;   // ticks → ns 系数（mach_timebase_info 缓存）
+
+uint64_t (*xrc_clock_orig_mach_absolute_time)(void) = NULL;
+int      (*xrc_clock_orig_clock_gettime)(int, struct timespec *) = NULL;
+uint64_t (*xrc_clock_orig_steady_now)(void) = NULL;
+
 int (*xrc_clock_orig_gettimeofday)(struct timeval *, void *) = NULL;
+
+static double s_tb(void) {
+    if (s_tb_ratio == 0.0) {
+        mach_timebase_info_data_t info = {0};
+        if (mach_timebase_info(&info) == KERN_SUCCESS && info.denom != 0)
+            s_tb_ratio = (double)info.numer / (double)info.denom;
+        if (s_tb_ratio == 0.0) s_tb_ratio = 1.0;
+    }
+    return s_tb_ratio;
+}
+
+static uint64_t s_ticks_to_ns(uint64_t t) { return (uint64_t)((double)t * s_tb()); }
+static uint64_t s_ns_to_ticks(uint64_t ns) { double r = s_tb(); return r > 0 ? (uint64_t)((double)ns / r) : ns; }
+
+static uint64_t s_compute_warp_ticks(uint64_t ticks) {
+    double rate = xrc_clock_get_rate();
+    uint64_t t0r = atomic_load(&s_mt0_real_ticks);
+    uint64_t t0w = atomic_load(&s_mt0_warp_ticks);
+    if (t0r == 0 || (rate >= 0.999 && rate <= 1.001)) return ticks;
+    if (ticks <= t0r) return t0w;
+    return t0w + (uint64_t)((double)(ticks - t0r) * rate);
+}
+
+uint64_t xrc_clock_mach_absolute_time(void) {
+    uint64_t t = xrc_clock_orig_mach_absolute_time ? xrc_clock_orig_mach_absolute_time() : 0;
+    if (atomic_load(&s_freeze_count) > 0) {
+        uint64_t f = atomic_load(&s_mfrozen_ticks);
+        return f ? f : t;
+    }
+    return s_compute_warp_ticks(t);
+}
+
+int xrc_clock_clock_gettime(int clk_id, struct timespec *tp) {
+    if (!tp) return xrc_clock_orig_clock_gettime ? xrc_clock_orig_clock_gettime(clk_id, tp) : -1;
+    int r = xrc_clock_orig_clock_gettime ? xrc_clock_orig_clock_gettime(clk_id, tp) : -1;
+    if (r != 0 || clk_id != CLOCK_MONOTONIC) return r;
+    uint64_t ns = (uint64_t)tp->tv_sec * 1000000000ULL + (uint64_t)tp->tv_nsec;
+    uint64_t wns;
+    if (atomic_load(&s_freeze_count) > 0) {
+        uint64_t f = atomic_load(&s_mfrozen_ticks);
+        wns = f ? s_ticks_to_ns(f) : ns;
+    } else {
+        wns = s_ticks_to_ns(s_compute_warp_ticks(s_ns_to_ticks(ns)));
+    }
+    tp->tv_sec  = (time_t)(wns / 1000000000ULL);
+    tp->tv_nsec = (long)(wns % 1000000000ULL);
+    return r;
+}
+
+uint64_t xrc_clock_steady_now(void) {
+    uint64_t ns = xrc_clock_orig_steady_now ? xrc_clock_orig_steady_now() : 0;
+    if (atomic_load(&s_freeze_count) > 0) {
+        uint64_t f = atomic_load(&s_mfrozen_ticks);
+        return f ? s_ticks_to_ns(f) : ns;
+    }
+    return s_ticks_to_ns(s_compute_warp_ticks(s_ns_to_ticks(ns)));
+}
 
 uint64_t xrc_real_now_us(void) {
     struct timeval tv = {0};
@@ -40,6 +108,12 @@ void xrc_clock_warp_reset(void) {
     uint64_t warp_now = s_compute_warp_us(real_now);
     atomic_store(&s_t0_real_us, real_now);
     atomic_store(&s_t0_warp_us, warp_now);
+    // 单调钟通道同步重锚
+    if (xrc_clock_orig_mach_absolute_time) {
+        uint64_t mt = xrc_clock_orig_mach_absolute_time();
+        atomic_store(&s_mt0_real_ticks, mt);
+        atomic_store(&s_mt0_warp_ticks, s_compute_warp_ticks(mt));
+    }
 }
 
 void xrc_clock_set_rate(double rate) {
@@ -51,8 +125,11 @@ void xrc_clock_set_rate(double rate) {
 void xrc_clock_freeze_inc(void) {
     int32_t prev = atomic_fetch_add(&s_freeze_count, 1);
     xrc_logd(XRCLC_BOOT, @"[clock] freeze inc %d→%d", prev, prev + 1);
-    if (prev == 0)
+    if (prev == 0) {
         atomic_store(&s_frozen_us, s_compute_warp_us(xrc_real_now_us()));
+        if (xrc_clock_orig_mach_absolute_time)
+            atomic_store(&s_mfrozen_ticks, s_compute_warp_ticks(xrc_clock_orig_mach_absolute_time()));
+    }
 }
 
 void xrc_clock_freeze_dec(void) {
@@ -68,6 +145,12 @@ void xrc_clock_freeze_dec(void) {
         uint64_t frozen = atomic_load(&s_frozen_us);
         atomic_store(&s_t0_real_us, real_now);
         atomic_store(&s_t0_warp_us, frozen ? frozen : real_now);
+        if (xrc_clock_orig_mach_absolute_time) {
+            uint64_t mt = xrc_clock_orig_mach_absolute_time();
+            uint64_t mf = atomic_load(&s_mfrozen_ticks);
+            atomic_store(&s_mt0_real_ticks, mt);
+            atomic_store(&s_mt0_warp_ticks, mf ? mf : mt);
+        }
     }
 }
 
