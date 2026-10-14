@@ -71,16 +71,27 @@ bool xrc_gameplay_request(xrc_op_t op, uint32_t param_ms) {
     return true;
 }
 
-// 两级非空校验：返回可用 note_group，否则 NULL。
+// 指针合理性：镜像/堆内的 8 字节对齐地址。
+// 4.3.0 的字段偏移（scene+928 / ng+48 / clk+40…）尚未逐条实证 ⇒ 宁可不动作，也绝不解引用垃圾指针。
+static inline bool xrc_ptr_ok(const void *p) {
+    uintptr_t v = (uintptr_t)p;
+    return v >= 0x100000000ULL && v < 0x800000000000ULL && (v & 7) == 0;
+}
+
+// 两级非空校验 + 指针合理性：返回可用 note_group，否则 NULL。
 static void *s_valid_note_group(void *scene) {
-    if (!scene) return NULL;
+    if (!xrc_ptr_ok(scene)) return NULL;
     void *ng = *(void **)((char *)scene + XRC_GP_NOTEGROUP_OFF);
-    if (!ng) return NULL;
+    if (!xrc_ptr_ok(ng)) return NULL;
     // 谱面钟必须可读（转场内部第一步就读 +48）
     void *clk = *(void **)((char *)ng + XRC_CLOCK_IN_NOTEGROUP_OFF);
-    if (!clk) return NULL;
+    if (!xrc_ptr_ok(clk)) return NULL;
     return ng;
 }
+
+// ---- 时钟布局运行时自检（4.3.0 安全闸）：定义见文件下方（依赖冻结状态变量）----
+int xrc_layout_state(void);
+
 
 
 
@@ -151,6 +162,37 @@ static _Atomic(int) s_frz_state  = 0;
 static _Atomic(int) s_frz_target = 0;
 static _Atomic(uint64_t) s_frz_deadline_us = 0;
 
+// ---- 时钟布局运行时自检（4.3.0 安全闸）----
+// 字段偏移（scene+928 / ng+48 / clk+52,+40,+45,+32）来自 6.x/7.0 谱系，4.3.0 未逐条实证。
+// 判据：谱面钟（clk+52 − clk+40）必须与**已实证的**音频播放位置（MTP getpos 缓存）相差
+// ≤350ms，且连续 20 帧成立 ⇒ 认定布局正确，才放行"写时钟"（seek / 循环回位 / 钉钟）。
+// 判据不成立 ⇒ 置 -1 永久禁用时钟写：功能降级，但绝不写坏内存。
+static _Atomic(int) s_layout_state = 0;   // 0=未判定 1=通过 -1=失败
+static int s_layout_good = 0, s_layout_bad = 0;
+
+static void s_layout_probe(void *ng) {
+    if (atomic_load(&s_layout_state) == 1) return;
+    if (xrc_clock_freeze_count() > 0 || atomic_load(&s_frz_state)) return;
+    int32_t chart = xrc_chart_clock_ms(ng);
+    int32_t audio = (int32_t)xrc_player_position_ms();
+    if (chart < 0 || audio <= 0) return;
+    int32_t d = chart - audio; if (d < 0) d = -d;
+    if (d <= 350) {
+        if (++s_layout_good >= 20) {
+            atomic_store(&s_layout_state, 1);
+            xrc_logi(XRCLC_JUDGE, @"[布局自检] 通过：chart=%dms audio=%dms Δ=%dms ⇒ 放行时钟写"
+                     "（字段 +%d/+%d/+%d/%d）", chart, audio, d,
+                     XRC_CLK_CUR_OFF, XRC_CLK_BASE_OFF, XRC_CLK_FLAG45_OFF, XRC_CLK_ALT_START_OFF);
+        }
+    } else if (++s_layout_bad >= 20) {
+        atomic_store(&s_layout_state, -1);
+        xrc_logw(XRCLC_JUDGE, @"[布局自检] 失败：chart=%dms audio=%dms Δ=%dms ⇒ 永久禁用时钟写"
+                 "（循环回位/seek 将不可用；其余功能不受影响）", chart, audio, d);
+    }
+}
+
+int xrc_layout_state(void) { return atomic_load(&s_layout_state); }
+
 static inline int32_t xrc_sat_add32(int32_t a, int32_t b) {
     int64_t v = (int64_t)a + b;
     if (v > 2147483647LL) return 2147483647;
@@ -165,6 +207,15 @@ static inline int32_t xrc_sat_add32(int32_t a, int32_t b) {
 // base 平移天然域无关：只加「同域两个量的差」，不引入任何跨域常数。
 static void xrc_clock_shift_to(void *note_group, int32_t target) {
     if (!note_group) return;
+    if (atomic_load(&s_layout_state) != 1) {   // 布局自检未通过 ⇒ 禁止写时钟（防写坏内存）
+        static int warned = 0;
+        if (!warned) {
+            warned = 1;
+            xrc_logw(XRCLC_JUDGE, @"时钟写被安全闸拦下（布局自检 state=%d；等自检通过或看失败原因）",
+                     atomic_load(&s_layout_state));
+        }
+        return;
+    }
     void *clk = *(void **)((char *)note_group + XRC_CLOCK_IN_NOTEGROUP_OFF);
     if (!clk) return;
     int32_t cur = xrc_chart_clock_ms(note_group);
@@ -180,7 +231,7 @@ static void xrc_clock_shift_to(void *note_group, int32_t target) {
 void xrc_freeze_end(void) {
     if (atomic_load(&s_frz_state) != XRC_FRZ_FROZEN) return;   // 幂等
     void *scene = atomic_load(&xrc_gp_instance);
-    void *ng = scene ? *(void **)((char *)scene + XRC_GP_NOTEGROUP_OFF) : NULL;
+    void *ng = s_valid_note_group(scene);
     int32_t tgt = atomic_load(&s_frz_target);
     if (ng) {
         int32_t pos = (int32_t)xrc_player_position_ms();
@@ -686,16 +737,20 @@ static void s_rate_probe_tick(void *note_group) {
 void xrc_gameplay_update(void *self, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5) {
     if (self) {
         atomic_store(&xrc_gp_instance, self);
-        void *note_group = *(void **)((char *)self + XRC_GP_NOTEGROUP_OFF);
+        void *note_group = s_valid_note_group(self);   // 指针合理性校验（4.3.0 字段偏移未逐一实证）
         if (note_group) {
             s_pause_tick(note_group);      // 暂停护栏（判定总闸/路过跳过/冻结看护）
-            s_gp_retime_logic_clock(note_group);
+            s_layout_probe(note_group);    // 时钟布局自检（通过后才放行一切时钟写）
+            // ⚠ 4.3.0：速度由 **BRK 时间钩(now_ms)** 提供；7.0 的 retime 会与之叠加
+            //   （谱面实际倍率变成 2·rate−1）⇒ 这里关闭。改回 retime 方案时再打开。
+            if (!XRC_SPEED_BY_TIME_BRK) s_gp_retime_logic_clock(note_group);
             s_rate_probe_tick(note_group);      // 音画倍率自测（1 Hz，只读）
             int32_t pos = xrc_chart_clock_ms(note_group);
             // 冻结/收敛窗内钟不是真实播放时间（钉住/落位中）——循环 tick 抑制，
             // 防事务中间态二次触发回跳（收口缺守卫会把钟弹回旧位 → 循环二跳）。
             // 练习暂停（面板开）期间同样抑制：拖动浏览越过 B 点不应被自动回位打断。
-            if (pos > 0 && !atomic_load(&s_frz_state) && !atomic_load(&s_practice_paused))
+            if (pos > 0 && !atomic_load(&s_frz_state) && !atomic_load(&s_practice_paused) &&
+                atomic_load(&s_layout_state) == 1)   // 布局自检通过才允许循环回位
                 xrc_loop_tick(self, (uint32_t)pos);
         }
         s_scrub_tick(self);     // 拖动 seek 落笔（轻量对齐；先于常规 deferred 操作）
