@@ -813,15 +813,18 @@ static void s_arc_hide_x(void *vctx) {
 static void s_arc_hide_a(void *vctx) { s_arc_hide_x(vctx); }
 static void s_arc_hide_b(void *vctx) { s_arc_hide_x(vctx); }
 
-// ---- 谱面钟 now_ms 返回钩（6.8 shell / 4.3.0）：X0 毫秒值按 rate 扭曲，跳过 RET ----
+// ---- 谱面钟 now_ms 返回钩（6.8 shell / 4.3.0）：X0 毫秒值按 rate 扭曲，模拟 RET（PC=LR）----
 extern uint64_t xrc_clock_warp_ms(uint64_t ms);
 static void s_time_now_warp(void *vctx) {
     ucontext_t *uc = (ucontext_t *)vctx;
     if (!uc || !uc->uc_mcontext) return;
     __typeof__(uc->uc_mcontext->__ss) *ss = &uc->uc_mcontext->__ss;
     ss->__x[0] = xrc_clock_warp_ms(ss->__x[0]);
+    // 站点是 now_ms 的 RET：跳过它 = 直接回调用方（PC=LR）。
+    // ⚠ 不能 PC=site+4——那会落进下一个函数(system_clock)的代码体，
+    //   跑完整个函数体后返回错误的时间值(秒),帧差爆炸 → 触摸即闪退。
     __darwin_arm_thread_state64_set_pc_fptr(*ss,
-        (void *)((uint64_t)__darwin_arm_thread_state64_get_pc(*ss) + 4));
+        (void *)(uint64_t)__darwin_arm_thread_state64_get_lr(*ss));
 }
 
 static const xrc_brk_entry_t k_brk_entries[] = {
