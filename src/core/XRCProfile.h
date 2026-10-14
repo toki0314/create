@@ -117,15 +117,18 @@
 // 路线：只读位置 + seekTo。
 #define XRC_OFF_MTP_VTABLE           (0x1021000ULL)   // 6.8 shell 实测：RTTI 20AudioProviderFMODiOS → vtable base 0x101020FF0，地址点 +0x10
 #define XRC_OFF_MTP_GETPOS           (0x70D0D0ULL)    // 6.8 shell：地址点槽 7 值；⚠ 槽位编号待 dev probe 验证
-#define XRC_PLAYER_SEEK_SLOT_OFF     (0x40)           // vtable 槽 8，形状同 6.13
+// ⚠ 4.3.0 未验证：0x40/0x30 是 7.0 的槽编号，槽 0 会被当合法函数指针调用（= crash）。
+//   2026-10-14 崩溃报告（EXC_BAD_ACCESS/KERN_PROTECTION_FAILURE @ base+0x103415C）
+//   证明"未重定位偏移被真实调用"即崩 ⇒ 未验证项一律置 0 关闭（消费者均有零值保护）。
+#define XRC_PLAYER_SEEK_SLOT_OFF     (0)              // vtable 槽 8（7.0 值 0x40；4.3.0 待验证）
 // vtable 槽 6（+0x30）= setPaused(paused, index)：内部按 index 取通道 handle
 // （0 = 默认 *(mtp+0x18) = mainBGMGroup 句柄）后尾调 FMOD_Channel_SetPaused。
 // 证据：外部参考实现全链对齐（resolver 0x1010E846C → 对象 vt[+0x10] → 实现 0x1010E84A0 与 6.13
 // 逐字节相同）；7.0 的 FMOD_Channel_SetPaused 本体 = 0x1010E2CCC。详见
 // 内部设计纪要（离线记录） §1.3/§2。
-#define XRC_PLAYER_PAUSE_SLOT_OFF    (0x30)           // vtable 槽 6
-#define XRC_OFF_CH_GET_POSITION      (0x1033BBCULL)   // Channel::getPosition（内层同源）
-#define XRC_OFF_GET_CURRENT_SOUND    (0x103415CULL)   // Channel::getCurrentSound（日志串已验）
+#define XRC_PLAYER_PAUSE_SLOT_OFF    (0)              // vtable 槽 6（7.0 值 0x30；4.3.0 待验证）
+#define XRC_OFF_CH_GET_POSITION      (0)              // Channel::getPosition（7.0=0x1033BBC；4.3.0 该处是 __DATA ⇒ 置 0）
+#define XRC_OFF_GET_CURRENT_SOUND    (0)              // Channel::getCurrentSound（7.0=0x103415C；4.3.0 该处是 __DATA ⇒ 置 0）
 // get_sound_length：未定位（进度条用 max_seen 兜底）。
 // get_registry：由 getpos hook 缓存 player 实例替代。
 #define XRC_OFF_GET_REGISTRY        0
@@ -134,26 +137,25 @@
 #define XRC_PLAYER_CHANNELS_OFF     (0x38)
 #define XRC_CHANNEL_ENTRY_PTR_OFF   (8)
 
-// ---------------- FMOD：音乐变速用到的入口 ----------------
+// ---------------- FMOD：音乐变速用到的入口（4.3.0 待重定位 ⇒ 全部置 0 关闭）----------------
 // 出处：FMOD 静态链入本二进制，各 API 自带调试串（`ChannelControl::addDSP` 等）→ 字符串 xref 定位。
 //   路线：直接用 **FMOD 内置移调 DSP**：
 //     ① setPitch(BGM 组, rate) 让音乐跟着速度走（音高随动）
 //     ② 组上挂内置 Pitch Shifter，参数 1/rate 把音高补回来 ⇒ 时长随速度、音高不变
 //     ③ 移调 DSP 有固有延迟（≈FFT 窗），把通道位置前移 rate·L 补偿
 //   类型号**不写死**：运行时枚举 createDSPByType + DSP::getInfo 取名字含 "Pitch" 者（XRCAudio.m）。
-#define XRC_OFF_FMOD_CC_SET_PITCH      (0x10E32F8ULL)   // ChannelControl::setPitch(cc, float)（乘数语义）
-#define XRC_OFF_FMOD_CC_ADD_DSP        (0x10E5194ULL)   // ChannelControl::addDSP(cc, index, dsp)
-#define XRC_OFF_FMOD_CREATE_DSP_BY_TYPE (0x10ABA64ULL)  // System::createDSPByType(sys, type, &dsp)
-#define XRC_OFF_FMOD_DSP_SET_PARAM_FLOAT (0x1063D74ULL) // DSP::setParameterFloat(dsp, index, value)（C API 3 参）
-// ⚠ **调试串 xref 的地址不是函数入口**：以 xref 地址（getParameterFloat +0x128 /
-//   getInfo +0x158）调用会进函数中段 ⇒ 序言没跑 + 出参写到栈上 ⇒ __stack_chk_fail 崩
-//   （首次变速、DSP 探测阶段）。以下地址均已回查函数起始。
-#define XRC_OFF_FMOD_DSP_GET_PARAM_FLOAT (0x1064210ULL) // DSP::getParameterFloat(dsp, idx, &v, valuestr, valuestrlen)（**5 参**）
-#define XRC_OFF_FMOD_DSP_GET_INFO      (0x1064C70ULL)   // DSP::getInfo(dsp, &name, &ver, &ch, &cw, &chh)（**6 参**）
-#define XRC_OFF_FMOD_DSP_RELEASE       (0x1062658ULL)   // DSP::release(dsp)（1 参）
-#define XRC_OFF_CH_SET_POSITION        (0x1033A94ULL)   // Channel::setPosition(ch, pos, unit)
+// ⚠ 以下 7.0 偏移在 4.3.0 全部未重定位：调用即跳进 __DATA 崩（2026-10-14 崩溃证据）。
+//   XRCAudio.m 的调用点均有 NULL 保护 ⇒ 置 0 后该模块自动降级（音乐变速暂不可用）。
+#define XRC_OFF_FMOD_CC_SET_PITCH      (0)   // 7.0=0x10E32F8
+#define XRC_OFF_FMOD_CC_ADD_DSP        (0)   // 7.0=0x10E5194
+#define XRC_OFF_FMOD_CREATE_DSP_BY_TYPE (0)  // 7.0=0x10ABA64
+#define XRC_OFF_FMOD_DSP_SET_PARAM_FLOAT (0) // 7.0=0x1063D74
+#define XRC_OFF_FMOD_DSP_GET_PARAM_FLOAT (0) // 7.0=0x1064210
+#define XRC_OFF_FMOD_DSP_GET_INFO      (0)   // 7.0=0x1064C70
+#define XRC_OFF_FMOD_DSP_RELEASE       (0)   // 7.0=0x1062658
+#define XRC_OFF_CH_SET_POSITION        (0)   // 7.0=0x1033A94
 #define XRC_PLAYER_BGM_GROUP_OFF       (0x18)           // AudioProviderFMODiOS + 0x18 = mainBGMGroup 句柄
-#define XRC_OFF_FMOD_SYSTEM_GLOBAL     (0x164E678ULL)   // qword_10164E678：游戏自己存的 FMOD_SYSTEM*（免落桩取用）
+#define XRC_OFF_FMOD_SYSTEM_GLOBAL     (0)   // 7.0=0x164E678（4.3.0 是 __DATA，读数无害但无意义 ⇒ 置 0）
 
 // ---------------- BRK 桩（第二种插桩形态）----------------
 // 原理：注入器把目标指令原地改成 `BRK #0`（4B，长度
