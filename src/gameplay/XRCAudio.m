@@ -177,12 +177,29 @@ static float s_pitch_ratio(double rate) {
 
 void xrc_audio_speed_apply(double rate) {
     s_resolve();
-    if (!p_set_pitch) return;
+    static uint64_t s_last_bail_log_us;
+    if (!p_set_pitch) {
+        uint64_t now = xrc_real_now_us();
+        if (now - s_last_bail_log_us > 3000000ULL) {     // 3s 节流
+            s_last_bail_log_us = now;
+            xrc_logw(XRCLC_BOOT, @"[audio] setPitch 入口未解析（偏移=%#llx）——音乐变速不可用",
+                     (unsigned long long)XRC_OFF_FMOD_CC_SET_PITCH);
+        }
+        return;
+    }
     if (!atomic_load(&s_enabled)) rate = 1.0;            // 关着：只保证音高复位，不跟随
     if (rate < 0.05) rate = 0.05;
     if (rate > 4.0) rate = 4.0;
     void *group = s_bgm_group();
-    if (!group) return;                                  // 还没进对局 / 组还没建：无从下手
+    if (!group) {                                        // 还没进对局 / player 未缓存：留痕（3s 节流）
+        uint64_t now = xrc_real_now_us();
+        if (now - s_last_bail_log_us > 3000000ULL) {
+            s_last_bail_log_us = now;
+            xrc_logw(XRCLC_BOOT, @"[audio] 无可用 ChannelControl：player=%p（getpos 钩子是否装上？见 [mtp] 行）",
+                     xrc_player_get());
+        }
+        return;
+    }
 
     int32_t rc_pitch = p_set_pitch(group, (float)rate);  // ① 音乐跟着速度走
     s_applied_rate = rate;
@@ -193,6 +210,7 @@ void xrc_audio_speed_apply(double rate) {
         xrc_logd(XRCLC_BOOT, @"[audio] 原速：setPitch=%.3f rc=%d，移调归 1.0", rate, rc_pitch);
         return;
     }
+    xrc_logi(XRCLC_BOOT, @"[audio] 跟速 setPitch(cc=%p, %.3f) rc=%d", group, rate, rc_pitch);
     if (!s_dsp) s_dsp = s_make_pitch_dsp();             // ② 音高补偿 DSP（按需建一次）
     if (!s_dsp) return;                                  // 退化：至少速度跟上了
     float pr = s_pitch_ratio(rate);
